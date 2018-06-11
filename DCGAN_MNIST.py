@@ -8,6 +8,10 @@ mnist = input_data.read_data_sets('../../MNIST_data', one_hot=True)
 
 
 # Placeholder for input images, latent Variable
+
+batch_size = 64
+n_noise = 64
+
 X_in = tf.placeholder(dtype=tf.float32, shape=[None, 28, 28], name='X')
 noise = tf.placeholder(dtype=tf.float32, shape=[None, n_noise])
 
@@ -114,9 +118,6 @@ with tf.control_dependencies(update_ops):
 if not os.path.exists('out/'):
     os.makedirs('out/')
 
-
-batch_size = 64
-n_noise = 64
 
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
