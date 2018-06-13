@@ -1,178 +1,201 @@
-import tensorflow as tf
-import numpy as np
-from tensorflow.examples.tutorials.mnist import input_data
-import matplotlib.pyplot as plt
 import os
+from glob import glob
+import numpy as np
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.examples.tutorials.mnist import input_data
+import matplotlib.gridspec as gridspec
 
 mnist = input_data.read_data_sets('../../MNIST_data', one_hot=True)
 
 
-# Placeholder for input images, latent Variable
+def model_inputs(image_width, image_height, image_channels, z_dim):
+    
+    # Tensor for the input real images
+    inputs_real = tf.placeholder(tf.float32, (None, image_width, image_height), name='input_real')
+    
+    # Tensor for the latent space
+    inputs_z = tf.placeholder(tf.float32, (None, z_dim), name='input_z')
+    
+    # Tensor for the learning rate 
+    learning_rate = tf.placeholder(tf.float32, name='learning_rate')
 
-batch_size = 64
-n_noise = 64
-
-X_in = tf.placeholder(dtype=tf.float32, shape=[None, 28, 28], name='X')
-noise = tf.placeholder(dtype=tf.float32, shape=[None, n_noise])
-
-keep_prob = tf.placeholder(dtype=tf.float32, name='keep_prob')
-is_training = tf.placeholder(dtype=tf.bool, name='is_training')
-
-# Relu Function 
-def lrelu(x):
-    return tf.maximum(x, tf.multiply(x, 0.2))
-
-# Cross entropy function
-def binary_cross_entropy(x, z):
-    eps = 1e-12
-    return (-(x * tf.log(z + eps) + (1. - x) * tf.log(1. - z + eps)))
-
+    return inputs_real, inputs_z, learning_rate
 
 # Discriminator's model
-def discriminator(img_in, reuse=None, keep_prob=keep_prob):
-    activation = lrelu
-    with tf.variable_scope("discriminator", reuse=reuse):
-        x = tf.reshape(img_in, shape=[-1, 28, 28, 1])
-        x = tf.layers.conv2d(x, kernel_size=5, filters=64, strides=2, padding='same', activation=activation)
-        x = tf.layers.dropout(x, keep_prob)
-        x = tf.layers.conv2d(x, kernel_size=5, filters=64, strides=1, padding='same', activation=activation)
-        x = tf.layers.dropout(x, keep_prob)
-        x = tf.layers.conv2d(x, kernel_size=5, filters=64, strides=1, padding='same', activation=activation)
-        x = tf.layers.dropout(x, keep_prob)
-        x = tf.contrib.layers.flatten(x)
-        x = tf.layers.dense(x, units=128, activation=activation)
-        x = tf.layers.dense(x, units=1, activation=tf.nn.sigmoid)
-        return x
+def discriminator(images, reuse=False):
 
+    with tf.variable_scope('discriminator', reuse=reuse):
+        
+        alpha = 0.2       
 
-# Generator's model
-def generator(z, keep_prob=keep_prob, is_training=is_training):
-    activation = lrelu
-    momentum = 0.99
-    with tf.variable_scope("generator", reuse=None):
-        x = z
-        d1 = 4
-        d2 = 1
-        x = tf.layers.dense(x, units=d1 * d1 * d2, activation=activation)
-        x = tf.layers.dropout(x, keep_prob)      
-        x = tf.contrib.layers.batch_norm(x, is_training=is_training, decay=momentum)  
-        x = tf.reshape(x, shape=[-1, d1, d1, d2])
-        x = tf.image.resize_images(x, size=[7, 7])
-        x = tf.layers.conv2d_transpose(x, kernel_size=5, filters=64, strides=2, padding='same', activation=activation)
-        x = tf.layers.dropout(x, keep_prob)
-        x = tf.contrib.layers.batch_norm(x, is_training=is_training, decay=momentum)
-        x = tf.layers.conv2d_transpose(x, kernel_size=5, filters=64, strides=2, padding='same', activation=activation)
-        x = tf.layers.dropout(x, keep_prob)
-        x = tf.contrib.layers.batch_norm(x, is_training=is_training, decay=momentum)
-        x = tf.layers.conv2d_transpose(x, kernel_size=5, filters=64, strides=1, padding='same', activation=activation)
-        x = tf.layers.dropout(x, keep_prob)
-        x = tf.contrib.layers.batch_norm(x, is_training=is_training, decay=momentum)
-        x = tf.layers.conv2d_transpose(x, kernel_size=5, filters=1, strides=1, padding='same', activation=tf.nn.sigmoid)
-        return x    
-
-# Code by Parag Mital (github.com/pkmital/CADL)
-def montage(images):
-    if isinstance(images, list):
-        images = np.array(images)
-    img_h = images.shape[1]
-    img_w = images.shape[2]
-    n_plots = int(np.ceil(np.sqrt(images.shape[0])))
-    m = np.ones((images.shape[1] * n_plots + n_plots + 1, images.shape[2] * n_plots + n_plots + 1)) * 0.5
-    for i in range(n_plots):
-        for j in range(n_plots):
-            this_filter = i * n_plots + j
-            if this_filter < images.shape[0]:
-                this_img = images[this_filter]
-                m[1 + i + i * img_h:1 + i + (i + 1) * img_h,
-                  1 + j + j * img_w:1 + j + (j + 1) * img_w] = this_img
-    return m
-
-
-g = generator(noise, keep_prob, is_training) # Initialize a random values from latent space
-d_real = discriminator(X_in) # Initilaze the first discriminator with Real data
-d_fake = discriminator(g, reuse=True)  # Initialize values for code space
-
-# Generator and discriminator variables
-vars_g = [var for var in tf.trainable_variables() if var.name.startswith("generator")]
-vars_d = [var for var in tf.trainable_variables() if var.name.startswith("discriminator")]
-
-
-d_reg = tf.contrib.layers.apply_regularization(tf.contrib.layers.l2_regularizer(1e-6), vars_d)
-g_reg = tf.contrib.layers.apply_regularization(tf.contrib.layers.l2_regularizer(1e-6), vars_g)
-
-loss_d_real = binary_cross_entropy(tf.ones_like(d_real), d_real)
-loss_d_fake = binary_cross_entropy(tf.zeros_like(d_fake), d_fake)
-
-# Reduce the loss function 
-loss_g = tf.reduce_mean(binary_cross_entropy(tf.ones_like(d_fake), d_fake))
-loss_d = tf.reduce_mean(0.5 * (loss_d_real + loss_d_fake))
-
-# Optimize the generator and discriminator variables
-update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-with tf.control_dependencies(update_ops):
-    optimizer_d = tf.train.RMSPropOptimizer(learning_rate=0.00015).minimize(loss_d + d_reg, var_list=vars_d)
-    optimizer_g = tf.train.RMSPropOptimizer(learning_rate=0.00015).minimize(loss_g + g_reg, var_list=vars_g)
-    
-    
-
-if not os.path.exists('out/'):
-    os.makedirs('out/')
-
-
-sess = tf.Session()
-sess.run(tf.global_variables_initializer())
-
-for i in range(60000):
-    
-    train_d = True
-    train_g = True
-    keep_prob_train = 0.6 
-    
-    
-    # Generate random viales for latent space 
-    n = np.random.uniform(0.0, 1.0, [batch_size, n_noise]).astype(np.float32)
-
-    # Reshape the 748 vector to fit the input of the discriminator
-    batch = [np.reshape(b, [28, 28]) for b in mnist.train.next_batch(batch_size=batch_size)[0]]  
-    
-    # Run the loss model
-    d_real_ls, d_fake_ls, g_ls, d_ls = sess.run([loss_d_real, loss_d_fake, loss_g, loss_d], feed_dict={X_in: batch, noise: n, keep_prob: keep_prob_train, is_training:True})
-    
-    # Calculate the loss of generator and discriminator
-    d_real_ls = np.mean(d_real_ls)
-    d_fake_ls = np.mean(d_fake_ls)
-    g_ls = g_ls
-    d_ls = d_ls
-    
-
-    # Difine restriction on the generator and discriminator to prevenet the overfitting
-    if g_ls * 1.5 < d_ls:
-        train_g = False
-        pass
-    if d_ls * 2 < g_ls:
-        train_d = False
-        pass
-
-    # Runn the optimization model   
-    if train_d:
-        sess.run(optimizer_d, feed_dict={noise: n, X_in: batch, keep_prob: keep_prob_train, is_training:True})
+        x1 = tf.reshape(images,[-1,28,28,1])
+        x1 = tf.layers.conv2d(x1, 64, 5, strides=2, padding='same')
+        relu1 = tf.maximum(alpha * x1, x1)
         
         
-    if train_g:
-        sess.run(optimizer_g, feed_dict={noise: n, keep_prob: keep_prob_train, is_training:True})
+        x2 = tf.layers.conv2d(relu1, 128, 5, strides=1, padding='same')
+        bn2 = tf.layers.batch_normalization(x2, training=True)
+        relu2 = tf.maximum(alpha * bn2, bn2)
+        
+        
+        x3 = tf.layers.conv2d(relu2, 256, 5, strides=2, padding='same')
+        bn3 = tf.layers.batch_normalization(x3, training=True)
+        relu3 = tf.maximum(alpha * bn3, bn3)
+
+
+        flat = tf.reshape(relu3, (-1, 7*7*256))
+        logits = tf.layers.dense(flat, 1)
+        out = tf.sigmoid(logits)
+        
+        return out, logits
+
+# Generator's moodel
+def generator(z, out_channel_dim, is_train=True):
+
+    with tf.variable_scope('generator', reuse=not is_train):
+        
+        alpha = 0.2
+        
+        
+        x1 = tf.layers.dense(z, 7*7*256)
+        
+        
+        x1 = tf.reshape(x1, (-1, 7, 7, 256))
+        x1 = tf.layers.batch_normalization(x1, training=is_train)
+        x1 = tf.maximum(alpha * x1, x1)
+        
+       
+        x2 = tf.layers.conv2d_transpose(x1, 128, 5, strides=1, padding='same')
+        x2 = tf.layers.batch_normalization(x2, training=is_train)
+        x2 = tf.maximum(alpha * x2, x2)
+        
+        
+        x3 = tf.layers.conv2d_transpose(x2, 64, 5, strides=2, padding='same')
+        x3 = tf.layers.batch_normalization(x3, training=is_train)
+        x3 = tf.maximum(alpha * x3, x3)
         
     
-    # Save generated images
-    if not i % 50:
-        print ('Iter: {} -- D loss: {:.4} -- G loss: {:.4}'.format(i,d_ls,g_ls))
-        if not train_g:
-            print("not training generator")
-        if not train_d:
-            print("not training discriminator")
-        gen_img = sess.run(g, feed_dict = {noise: n, keep_prob: 1.0, is_training:False})
-        imgs = [img[:,:,0] for img in gen_img]
-        m = montage(imgs)
-        gen_img = m
+        logits = tf.layers.conv2d_transpose(x3, out_channel_dim, 5, strides=2, padding='same')
+        
+        
+        out = tf.sigmoid(logits)
+        
+        return out
+
+# Define the model calculaating the loss
+def model_loss(input_real, input_z, out_channel_dim):
+
+    smooth = 0.1
+    g_model = generator(input_z, out_channel_dim, is_train=True)
+    d_model_real, d_logits_real = discriminator(input_real)
+    d_model_fake, d_logits_fake = discriminator(g_model, reuse=True)
+
+    d_loss_real = tf.reduce_mean(
+        tf.nn.sigmoid_cross_entropy_with_logits(logits=d_logits_real, labels=tf.ones_like(d_model_real) * (1 - smooth)))
+    d_loss_fake = tf.reduce_mean(
+        tf.nn.sigmoid_cross_entropy_with_logits(logits=d_logits_fake, labels=tf.zeros_like(d_model_fake)))
+    g_loss = tf.reduce_mean(
+        tf.nn.sigmoid_cross_entropy_with_logits(logits=d_logits_fake, labels=tf.ones_like(d_model_fake)))
+
+    d_loss = d_loss_real + d_loss_fake
+
+    return d_loss, g_loss
+
+# Optimization Model
+def model_opt(d_loss, g_loss, learning_rate, beta1):
+
+    # Get weights and bias to update
+    t_vars = tf.trainable_variables()
+    d_vars = [var for var in t_vars if var.name.startswith('discriminator')]
+    g_vars = [var for var in t_vars if var.name.startswith('generator')]
+
+    # Optimize
+    with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)): 
+        
+        d_train_opt = tf.train.AdamOptimizer(learning_rate=learning_rate, beta1=beta1).minimize(d_loss, var_list=d_vars)
+        g_train_opt = tf.train.AdamOptimizer(learning_rate=learning_rate, beta1=beta1).minimize(g_loss, var_list=g_vars)
+
+        return d_train_opt, g_train_opt
+
+
+# Plot the generated images
+def plote(samples):
+    fig = plt.figure(figsize=(4,4))
+    gs = gridspec.GridSpec(4,4)
+    gs.update(wspace=0.05,hspace=0.05)
+    samples = samples.reshape(16,784)
+    for i, sample in enumerate(samples):
+        ax = plt.subplot(gs[i])
         plt.axis('off')
-        plt.imshow(gen_img, cmap='gray')
-        plt.savefig('out/{}.png'.format(str(i).zfill(3)),bbox_inches='tight')
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.set_aspect('equal')
+        plt.imshow(sample.reshape(28,28),cmap='gray')
+
+    return fig
+
+# The training Function
+def train(epoch_count, batch_size, z_dim, learning_rate, beta1):
+
+    i = 0
+    # Define inputs
+    input_real, input_z, lr = model_inputs(28, 28, 1, z_dim)
+    
+    # Define loss model
+    d_loss, g_loss = model_loss(input_real, input_z, 1)
+    
+    # Define optimization model
+    d_train_opt, g_train_opt = model_opt(d_loss, g_loss, lr, beta1)
+    
+    
+    with tf.Session() as sess:
+        sess.run(tf.global_variables_initializer())
+        for e in range(epoch_count):
+            if e % 100 !=0:
+                print("Epoch {}/{}".format(e+1,epoch_count))
+                        
+            X_mb = batch = [np.reshape(b, [28, 28]) for b in mnist.train.next_batch(batch_size=batch_size)[0]]             
+            Z_sample = np.random.uniform(-1, 1, size=(batch_size, z_dim))
+                
+            # Run optimizers
+            _ = sess.run(d_train_opt, feed_dict={input_real: X_mb, 
+                                              input_z: Z_sample,
+                                              lr: learning_rate})
+                
+            _ = sess.run(g_train_opt, feed_dict={input_real: X_mb, 
+                                                     input_z: Z_sample,
+                                                     lr: learning_rate})
+                
+            # For each 10 batches, get the losses and print them out
+                
+            if e % 100 == 0:
+                i += 1
+                d_train_loss = d_loss.eval({input_real: X_mb, input_z: Z_sample})
+                    
+                g_train_loss = g_loss.eval({input_z: Z_sample})
+                    
+                print("Epoch {}/{}: ".format(e+1, epoch_count),
+                         "Discriminator loss = {:.4f} ".format(d_train_loss),
+                         "Generator loss = {:.4f}".format(g_train_loss))
+                    
+            # Show generator output samples so we can see the progress during training               
+            if e % 10 == 0:
+                z_dim = input_z.get_shape().as_list()[-1]
+                Z_noise = np.random.uniform(-1,1,size=[16,z_dim])
+                samples = sess.run(generator(input_z,1,False),feed_dict={input_z: Z_noise})
+                fig = plote(samples)
+                plt.savefig('out_classic/{}.png'.format(str(e).zfill(3)), bbox_inches='tight')
+                i +=1
+                plt.close(fig)
+
+batch_size = 32 
+z_dim = 16
+learning_rate = 0.0002
+beta1 = 0.5
+n_images = 25
+epochs = 1000000
+
+with tf.Graph().as_default():
+    train(epochs, batch_size, z_dim, learning_rate, beta1)
+   
