@@ -1,12 +1,28 @@
 import os
+import sys
 from glob import glob
 import numpy as np
 from matplotlib import pyplot
+import matplotlib.pyplot as plt
 import tensorflow as tf
+import matplotlib.gridspec as gridspec
 
 import helper
 
 data_dir = './input'
+image_dir = ''
+save_dir = ''
+
+DATASET_NAME = sys.argv[1]
+
+if DATASET_NAME == 'celeba':
+    images_dir = 'img_align_celeba/*.jpg'
+elif DATASET_NAME == 'cat':
+    images_dir = 'cat/cat*.jpg'
+elif DATASET_NAME == 'dog':
+    images_dir = 'cat/cat*.jpg'
+else:
+    print("DATASET not found !")
 
 # Input's model
 def model_inputs(image_width, image_height, image_channels, z_dim):
@@ -42,10 +58,14 @@ def discriminator(images, reuse=False):
         x3 = tf.layers.conv2d(relu2, 256, 5, strides=2, padding='same')
         bn3 = tf.layers.batch_normalization(x3, training=True)
         relu3 = tf.maximum(alpha * bn3, bn3)
+
+        x4 = tf.layers.conv2d(relu2, 512, 5, strides=1, padding='same')
+        bn4 = tf.layers.batch_normalization(x4, training=True)
+        relu4 = tf.maximum(alpha * bn4, bn4)
         
 
         
-        flat = tf.reshape(relu3, (-1, 7*7*256))
+        flat = tf.reshape(relu4, (-1, 7*7*512)) # 7 - 10
         logits = tf.layers.dense(flat, 1)
         out = tf.sigmoid(logits)
         
@@ -60,25 +80,29 @@ def generator(z, out_channel_dim, is_train=True):
         alpha = 0.2
         
         
-        x1 = tf.layers.dense(z, 7*7*256)
+        x1 = tf.layers.dense(z, 7*7*512) # 7 - 10
         
         
-        x1 = tf.reshape(x1, (-1, 7, 7, 256))
+        x1 = tf.reshape(x1, (-1, 7, 7, 512)) # 7 - 10
         x1 = tf.layers.batch_normalization(x1, training=is_train)
         x1 = tf.maximum(alpha * x1, x1)
-        
-       
-        x2 = tf.layers.conv2d_transpose(x1, 128, 5, strides=1, padding='same')
+
+        x2 = tf.layers.conv2d_transpose(x1, 256, 5, strides=1, padding='same')
         x2 = tf.layers.batch_normalization(x2, training=is_train)
         x2 = tf.maximum(alpha * x2, x2)
         
-        
-        x3 = tf.layers.conv2d_transpose(x2, 64, 5, strides=2, padding='same')
+       
+        x3 = tf.layers.conv2d_transpose(x1, 128, 5, strides=2, padding='same')
         x3 = tf.layers.batch_normalization(x3, training=is_train)
         x3 = tf.maximum(alpha * x3, x3)
         
+        
+        x4 = tf.layers.conv2d_transpose(x3, 64, 5, strides=1, padding='same')
+        x4 = tf.layers.batch_normalization(x4, training=is_train)
+        x4 = tf.maximum(alpha * x4, x4)
+        
     
-        logits = tf.layers.conv2d_transpose(x3, out_channel_dim, 5, strides=2, padding='same')
+        logits = tf.layers.conv2d_transpose(x4, out_channel_dim, 5, strides=2, padding='same')
         
         
         out = tf.tanh(logits)
@@ -121,28 +145,31 @@ def model_opt(d_loss, g_loss, learning_rate, beta1):
         return d_train_opt, g_train_opt
 
 # Ploting function
-def show_generator_output(sess, n_images, input_z, out_channel_dim, image_mode,ep,batch):
+def plote(samples):
+    fig = plt.figure(figsize=(4,4))
+    gs = gridspec.GridSpec(4,4)
+    gs.update(wspace=0.05,hspace=0.05)
+    samples = (((samples - samples.min()) * 255) / (samples.max() - samples.min())).astype(np.uint8)
+    samples = samples.reshape(16,2352) #2352
+    for i, sample in enumerate(samples):
+        ax = plt.subplot(gs[i])
+        plt.axis('off')
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.set_aspect('equal')
+        plt.imshow(sample.reshape(28,28,3))#
 
-    z_dim = input_z.get_shape().as_list()[-1]
-    example_z = np.random.uniform(-1, 1, size=[n_images, z_dim])
-
-    samples = sess.run(
-        generator(input_z, out_channel_dim, False),
-        feed_dict={input_z: example_z})
-
-    images_grid = helper.images_square_grid(samples, image_mode)
-    pyplot.imshow(images_grid, cmap='RGB')
-    pyplot.savefig('classic/{}-{}.png'.format(str(ep).zfill(3),str(batch)), bbox_inches='tight')
+    return fig
 
 
 # The training Function
 def train(epoch_count, batch_size, z_dim, learning_rate, beta1, get_batches, data_shape, data_image_mode):
 
+    i = 0
     # Get images dimensions
     image_width = data_shape[1]
     image_height = data_shape[2]
     image_channels = data_shape[3]
-
 
     # Define inputs
     input_real, input_z, lr = model_inputs(image_width, image_height, image_channels, z_dim)
@@ -191,20 +218,28 @@ def train(epoch_count, batch_size, z_dim, learning_rate, beta1, get_batches, dat
                     
                 # Show generator output samples so we can see the progress during training
                 
-                if batch_counter % 100 == 0:
-                    show_generator_output(sess, n_images, input_z, image_channels, data_image_mode,e,batch_counter)
+                if batch_counter % 10 == 0:
+                    z_dim = input_z.get_shape().as_list()[-1]
+                    Z_noise = np.random.uniform(-1,1,size=[16,z_dim])
+                    samples = sess.run(generator(input_z,image_channels,False),feed_dict={input_z: Z_noise})
+                    fig = plote(samples)
+                    plt.savefig('out_classic/{}.png'.format(str(i).zfill(3)), bbox_inches='tight')
+                    i +=1
+                    plt.close(fig)
                 
 
 
 batch_size = 32
-z_dim = 100
+z_dim = 150
 learning_rate = 0.0002
 beta1 = 0.5
 n_images = 25
 
 epochs = 20
 
-celeba_dataset = helper.Dataset('celeba', glob(os.path.join(data_dir, 'img_align_celeba/dog*.jpg')))
+
+
+celeba_dataset = helper.Dataset(DATASET_NAME, glob(os.path.join(data_dir, images_dir)))
 
 with tf.Graph().as_default():
     train(epochs, batch_size, z_dim, learning_rate, beta1, celeba_dataset.get_batches,

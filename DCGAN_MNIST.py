@@ -8,7 +8,6 @@ import matplotlib.gridspec as gridspec
 
 mnist = input_data.read_data_sets('../../MNIST_data', one_hot=True)
 
-
 def model_inputs(image_width, image_height, image_channels, z_dim):
     
     # Tensor for the input real images
